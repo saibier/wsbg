@@ -75,11 +75,8 @@ struct swaybg_output {
 	struct zwlr_layer_surface_v1 *layer_surface;
 
 	uint32_t width, height;
-	int32_t scale;
-
-	uint32_t configure_serial;
-	bool dirty, needs_ack;
-	int32_t committed_width, committed_height, committed_scale;
+	int32_t buffer_width, buffer_height;
+	bool configured, buffer_change;
 
 	struct wl_list link;
 };
@@ -103,24 +100,7 @@ bool is_valid_color(const char *color) {
 }
 
 static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
-	int buffer_width = output->width * output->scale,
-		buffer_height = output->height * output->scale;
-
-	// If the last committed buffer has the same size as this one would, do
-	// not render a new buffer, because it will be identical to the old one
-	if (output->committed_width == buffer_width &&
-			output->committed_height == buffer_height) {
-		if (output->committed_scale != output->scale) {
-			wl_surface_set_buffer_scale(output->surface, output->scale);
-			wl_surface_commit(output->surface);
-
-			output->committed_scale = output->scale;
-		}
-		return;
-	}
-
 	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
-			output->state->viewporter &&
 			output->state->single_pixel_buffer_manager) {
 		uint8_t r8 = (output->config->color >> 24) & 0xFF;
 		uint8_t g8 = (output->config->color >> 16) & 0xFF;
@@ -136,20 +116,15 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 		wl_surface_attach(output->surface, buffer, 0, 0);
 		wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
 
-		struct wp_viewport *viewport = wp_viewporter_get_viewport(
-			output->state->viewporter, output->surface);
-		wp_viewport_set_destination(viewport, output->width, output->height);
-
 		wl_surface_commit(output->surface);
 
-		wp_viewport_destroy(viewport);
 		wl_buffer_destroy(buffer);
 		return;
 	}
 
 	struct pool_buffer buffer;
 	if (!create_buffer(&buffer, output->state->shm,
-			buffer_width, buffer_height, WL_SHM_FORMAT_ARGB8888)) {
+			output->buffer_width, output->buffer_height, WL_SHM_FORMAT_ARGB8888)) {
 		return;
 	}
 
@@ -169,18 +144,14 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 
 		if (surface) {
 			render_background_image(cairo, surface,
-				output->config->mode, buffer_width, buffer_height);
+				output->config->mode, output->buffer_width, output->buffer_height);
 		}
 	}
 
-	wl_surface_set_buffer_scale(output->surface, output->scale);
 	wl_surface_attach(output->surface, buffer.buffer, 0, 0);
 	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
 	wl_surface_commit(output->surface);
-
-	output->committed_width = buffer_width;
-	output->committed_height = buffer_height;
-	output->committed_scale = output->scale;
+	output->buffer_change = false;
 
 	// we will not reuse the buffer, so destroy it immediately
 	destroy_buffer(&buffer);
@@ -224,11 +195,24 @@ static void layer_surface_configure(void *data,
 		struct zwlr_layer_surface_v1 *surface,
 		uint32_t serial, uint32_t width, uint32_t height) {
 	struct swaybg_output *output = data;
-	output->width = width;
-	output->height = height;
-	output->dirty = true;
-	output->configure_serial = serial;
-	output->needs_ack = true;
+	if (output->width != width || output->height != height) {
+		output->width = width;
+		output->height = height;
+
+		if (width < 1 || height < 1) {
+			return;
+		}
+
+		struct wp_viewport *viewport = wp_viewporter_get_viewport(
+				output->state->viewporter, output->surface);
+
+		zwlr_layer_surface_v1_ack_configure(surface, serial);
+		wp_viewport_set_destination(viewport, width, height);
+		wl_surface_commit(output->surface);
+		output->configured = true;
+
+		wp_viewport_destroy(viewport);
+	}
 }
 
 static void layer_surface_closed(void *data,
@@ -250,9 +234,14 @@ static void output_geometry(void *data, struct wl_output *output, int32_t x,
 	// Who cares
 }
 
-static void output_mode(void *data, struct wl_output *output, uint32_t flags,
+static void output_mode(void *data, struct wl_output *wl_output, uint32_t flags,
 		int32_t width, int32_t height, int32_t refresh) {
-	// Who cares
+	struct swaybg_output *output = data;
+	if (output->buffer_width != width || output->buffer_height != height) {
+		output->buffer_width = width;
+		output->buffer_height = height;
+		output->buffer_change = true;
+	}
 }
 
 static void create_layer_surface(struct swaybg_output *output) {
@@ -298,11 +287,7 @@ static void output_done(void *data, struct wl_output *wl_output) {
 
 static void output_scale(void *data, struct wl_output *wl_output,
 		int32_t scale) {
-	struct swaybg_output *output = data;
-	output->scale = scale;
-	if (output->state->run_display && output->width > 0 && output->height > 0) {
-		output->dirty = true;
-	}
+	// Who cares
 }
 
 static void find_config(struct swaybg_output *output, const char *name) {
@@ -583,29 +568,17 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	if (state.compositor == NULL || state.shm == NULL ||
-			state.layer_shell == NULL) {
+			state.layer_shell == NULL || state.viewporter == NULL) {
 		swaybg_log(LOG_ERROR, "Missing a required Wayland interface");
 		return 1;
 	}
 
 	state.run_display = true;
 	while (wl_display_dispatch(state.display) != -1 && state.run_display) {
-		// Send acks, and determine which images need to be loaded
+		// Determine which images need to be loaded
 		struct swaybg_output *output;
 		wl_list_for_each(output, &state.outputs, link) {
-			if (output->needs_ack) {
-				output->needs_ack = false;
-				zwlr_layer_surface_v1_ack_configure(
-						output->layer_surface,
-						output->configure_serial);
-			}
-
-			int buffer_width = output->width * output->scale,
-				buffer_height = output->height * output->scale;
-			bool buffer_change =
-				output->committed_height != buffer_height ||
-				output->committed_width != buffer_width;
-			if (output->dirty && output->config->image && buffer_change) {
+			if (output->configured && output->config->image && output->buffer_change) {
 				output->config->image->load_required = true;
 			}
 		}
@@ -623,8 +596,8 @@ int main(int argc, char **argv) {
 			}
 
 			wl_list_for_each(output, &state.outputs, link) {
-				if (output->dirty && output->config->image == image) {
-					output->dirty = false;
+				if (output->configured && output->buffer_change &&
+						output->config->image == image) {
 					render_frame(output, surface);
 				}
 			}
@@ -635,8 +608,7 @@ int main(int argc, char **argv) {
 
 		// Redraw outputs without associated image
 		wl_list_for_each(output, &state.outputs, link) {
-			if (output->dirty) {
-				output->dirty = false;
+			if (output->configured && output->buffer_change) {
 				render_frame(output, NULL);
 			}
 		}
