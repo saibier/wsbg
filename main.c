@@ -99,7 +99,22 @@ bool is_valid_color(const char *color) {
 	return true;
 }
 
+static void render_buffer(struct swaybg_output *output, struct wl_buffer *buffer) {
+	wl_surface_attach(output->surface, buffer, 0, 0);
+	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
+
+	struct wp_viewport *viewport = wp_viewporter_get_viewport(
+			output->state->viewporter, output->surface);
+	wp_viewport_set_destination(viewport, output->width, output->height);
+
+	wl_surface_commit(output->surface);
+
+	wp_viewport_destroy(viewport);
+}
+
 static void render_frame(struct swaybg_output *output, cairo_surface_t *surface) {
+	output->buffer_change = false;
+
 	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
 			output->state->single_pixel_buffer_manager) {
 		uint8_t r8 = (output->config->color >> 24) & 0xFF;
@@ -113,11 +128,7 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 		uint32_t a32 = a8 * f;
 		struct wl_buffer *buffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
 			output->state->single_pixel_buffer_manager, r32, g32, b32, a32);
-		wl_surface_attach(output->surface, buffer, 0, 0);
-		wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
-
-		wl_surface_commit(output->surface);
-
+		render_buffer(output, buffer);
 		wl_buffer_destroy(buffer);
 		return;
 	}
@@ -148,12 +159,7 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 		}
 	}
 
-	wl_surface_attach(output->surface, buffer.buffer, 0, 0);
-	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
-	wl_surface_commit(output->surface);
-	output->buffer_change = false;
-
-	// we will not reuse the buffer, so destroy it immediately
+	render_buffer(output, buffer.buffer);
 	destroy_buffer(&buffer);
 }
 
