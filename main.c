@@ -133,9 +133,20 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 		return;
 	}
 
+	int32_t width, height;
+	// Rotate buffer to match output
+	if ((output->buffer_width < output->buffer_height) ==
+			(output->width < output->height)) {
+		width = output->buffer_width;
+		height = output->buffer_height;
+	} else {
+		width = output->buffer_height;
+		height = output->buffer_width;
+	}
+
 	struct pool_buffer buffer;
 	if (!create_buffer(&buffer, output->state->shm,
-			output->buffer_width, output->buffer_height, WL_SHM_FORMAT_ARGB8888)) {
+			width, height, WL_SHM_FORMAT_ARGB8888)) {
 		return;
 	}
 
@@ -155,7 +166,7 @@ static void render_frame(struct swaybg_output *output, cairo_surface_t *surface)
 
 		if (surface) {
 			render_background_image(cairo, surface,
-				output->config->mode, output->buffer_width, output->buffer_height);
+				output->config->mode, width, height);
 		}
 	}
 
@@ -202,6 +213,11 @@ static void layer_surface_configure(void *data,
 		uint32_t serial, uint32_t width, uint32_t height) {
 	struct swaybg_output *output = data;
 	if (output->width != width || output->height != height) {
+		// Detect when output rotation changes
+		if ((width < height) != (output->width < output->height)) {
+			output->buffer_change = true;
+		}
+
 		output->width = width;
 		output->height = height;
 
