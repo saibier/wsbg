@@ -1,5 +1,5 @@
-#ifndef _SWAY_BACKGROUND_IMAGE_H
-#define _SWAY_BACKGROUND_IMAGE_H
+#ifndef _WSBG_BACKGROUND_IMAGE_H
+#define _WSBG_BACKGROUND_IMAGE_H
 #include "cairo_util.h"
 
 enum background_mode {

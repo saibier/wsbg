@@ -1,5 +1,5 @@
-#ifndef _SWAY_CAIRO_UTIL_H
-#define _SWAY_CAIRO_UTIL_H
+#ifndef _WSBG_CAIRO_UTIL_H
+#define _WSBG_CAIRO_UTIL_H
 
 #include <stdint.h>
 #include <cairo.h>

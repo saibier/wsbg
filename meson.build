@@ -1,7 +1,7 @@
 project(
-	'swaybg',
+	'wsbg',
 	'c',
-	version: '1.1.1',
+	version: '0.1.0',
 	license: 'MIT',
 	meson_version: '>=0.59.0',
 	default_options: [
@@ -45,7 +45,7 @@ if git.found()
 endif
 
 add_project_arguments([
-	'-DSWAYBG_VERSION=@0@'.format(version),
+	'-DWSBG_VERSION=@0@'.format(version),
 	'-DHAVE_GDK_PIXBUF=@0@'.format(gdk_pixbuf.found().to_int()),
 ], language: 'c')
 
@@ -101,16 +101,18 @@ dependencies = [
 sources = [
 	'background-image.c',
 	'cairo.c',
+	'json.c',
 	'log.c',
 	'main.c',
 	'pool-buffer.c',
+	'sway-ipc.c',
 ]
 
-swaybg_inc = include_directories('include')
+wsbg_inc = include_directories('include')
 
-executable('swaybg',
+executable('wsbg',
 	sources,
-	include_directories: [swaybg_inc],
+	include_directories: [wsbg_inc],
 	dependencies: dependencies,
 	install: true
 )
@@ -118,7 +120,7 @@ executable('swaybg',
 if scdoc.found()
 	mandir = get_option('mandir')
 	man_files = [
-		'swaybg.1.scd',
+		'wsbg.1.scd',
 	]
 	foreach filename : man_files
 		topic = filename.split('.')[-3].split('/')[-1]

@@ -1,5 +1,5 @@
-#ifndef _SWAY_BUFFERS_H
-#define _SWAY_BUFFERS_H
+#ifndef _WSBG_BUFFERS_H
+#define _WSBG_BUFFERS_H
 #include <cairo.h>
 #include <stdbool.h>
 #include <stdint.h>
