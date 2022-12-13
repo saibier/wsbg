@@ -1,20 +1,18 @@
 #ifndef _WSBG_BACKGROUND_IMAGE_H
 #define _WSBG_BACKGROUND_IMAGE_H
+#include <stdint.h>
 #include "cairo_util.h"
-
-enum background_mode {
-	BACKGROUND_MODE_STRETCH,
-	BACKGROUND_MODE_FILL,
-	BACKGROUND_MODE_FIT,
-	BACKGROUND_MODE_CENTER,
-	BACKGROUND_MODE_TILE,
-	BACKGROUND_MODE_SOLID_COLOR,
-	BACKGROUND_MODE_INVALID,
-};
+#include "state.h"
 
 enum background_mode parse_background_mode(const char *mode);
-cairo_surface_t *load_background_image(const char *path);
-void render_background_image(cairo_t *cairo, cairo_surface_t *image,
-		enum background_mode mode, int buffer_width, int buffer_height);
+
+void unload_image(struct wsbg_image *image);
+
+struct wsbg_buffer *get_wsbg_buffer(
+		struct wsbg_config *config,
+		struct wsbg_state *state,
+		int32_t width, int32_t height);
+
+void release_wsbg_buffer(struct wsbg_buffer *buffer);
 
 #endif

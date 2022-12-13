@@ -14,122 +14,53 @@
 #include "json.h"
 #include "log.h"
 #include "pool-buffer.h"
+#include "state.h"
 #include "sway-ipc.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "single-pixel-buffer-v1-client-protocol.h"
 
-static uint32_t parse_color(const char *color) {
-	if (color[0] == '#') {
-		++color;
+const struct wsbg_color default_color = {
+	.r = 0x40, .b = 0x40, .g = 0x40, .a = 0xFF };
+
+static bool parse_color(const char *str, struct wsbg_color *color) {
+	int len = strlen(str);
+	if (len != 7 || str[0] != '#') {
+		goto err;
 	}
-
-	int len = strlen(color);
-	if (len != 6 && len != 8) {
-		wsbg_log(LOG_DEBUG, "Invalid color %s, defaulting to 0xFFFFFFFF",
-				color);
-		return 0xFFFFFFFF;
-	}
-	uint32_t res = (uint32_t)strtoul(color, NULL, 16);
-	if (strlen(color) == 6) {
-		res = (res << 8) | 0xFF;
-	}
-	return res;
-}
-
-struct wsbg_state {
-	struct wl_display *display;
-	struct wl_compositor *compositor;
-	struct wl_shm *shm;
-	struct zwlr_layer_shell_v1 *layer_shell;
-	struct wp_viewporter *viewporter;
-	struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer_manager;
-	struct wl_list options;     // struct wsbg_option::link
-	struct wl_list outputs;     // struct wsbg_output::link
-	struct wl_list workspaces;  // struct wsbg_workspace::link
-	struct wl_list images;      // struct wsbg_image::link
-};
-
-struct wsbg_image {
-	struct wl_list link;
-	const char *path;
-	bool load_required;
-};
-
-enum wsbg_option_type {
-	WSBG_OUTPUT = 1,
-	WSBG_WORKSPACE,
-	WSBG_COLOR,
-	WSBG_IMAGE,
-	WSBG_MODE
-};
-
-struct wsbg_option {
-	enum wsbg_option_type type;
-	union {
-		const char *name;
-		uint32_t color;
-		struct wsbg_image *image;
-		enum background_mode mode;
-	} value;
-	struct wl_list link;
-};
-
-struct wsbg_config {
-	const char *workspace;
-	uint32_t color;
-	struct wsbg_image *image;
-	enum background_mode mode;
-	struct wl_list link;
-};
-
-struct wsbg_output {
-	uint32_t wl_name;
-	struct wl_output *wl_output;
-	char *name;
-	char *identifier;
-
-	struct wsbg_state *state;
-	struct wsbg_config *config;
-
-	struct wl_list configs;  // struct wsbg_config::link
-
-	struct wl_surface *surface;
-	struct zwlr_layer_surface_v1 *layer_surface;
-
-	uint32_t width, height;
-	int32_t buffer_width, buffer_height;
-	bool configured, buffer_change;
-
-	struct wl_list link;
-};
-
-struct wsbg_workspace {
-	char *name;
-	char *output;
-	struct wl_list link;
-};
-
-bool is_valid_color(const char *color) {
-	int len = strlen(color);
-	if (len != 7 || color[0] != '#') {
-		wsbg_log(LOG_ERROR, "%s is not a valid color for wsbg. "
-				"Color should be specified as #rrggbb (no alpha).", color);
-		return false;
-	}
-
-	int i;
-	for (i = 1; i < len; ++i) {
-		if (!isxdigit(color[i])) {
-			return false;
+	++str;
+	uint8_t rgb[3] = {};
+	for (unsigned i = 0; i < 6; ++i) {
+		if ((i & 1)) {
+			rgb[i >> 1] <<= 4;
+		}
+		if ('0' <= str[i] && str[i] <= '9') {
+			rgb[i >> 1] += str[i] - '0';
+		} else if ('a' <= str[i] && str[i] <= 'f') {
+			rgb[i >> 1] += str[i] - 'a' + 0xA;
+		} else if ('A' <= str[i] && str[i] <= 'F') {
+			rgb[i >> 1] += str[i] - 'A' + 0xA;
+		} else {
+			goto err;
 		}
 	}
-
+	color->r = rgb[0];
+	color->g = rgb[1];
+	color->b = rgb[2];
+	color->a = 0xFF;
 	return true;
+err:
+	wsbg_log(LOG_ERROR, "%s is not a valid color for wsbg. "
+			"Color should be specified as #rrggbb (no alpha).", str);
+	return false;
 }
 
-static void render_buffer(struct wsbg_output *output, struct wl_buffer *buffer) {
-	wl_surface_attach(output->surface, buffer, 0, 0);
+static void render_buffer(struct wsbg_output *output) {
+	if (!output->config->buffer) {
+		return;
+	}
+
+	wl_surface_attach(output->surface, output->config->buffer->buffer, 0, 0);
 	wl_surface_damage_buffer(output->surface, 0, 0, INT32_MAX, INT32_MAX);
 
 	struct wp_viewport *viewport = wp_viewporter_get_viewport(
@@ -141,27 +72,8 @@ static void render_buffer(struct wsbg_output *output, struct wl_buffer *buffer) 
 	wp_viewport_destroy(viewport);
 }
 
-static void render_frame(struct wsbg_output *output, cairo_surface_t *surface) {
-	output->buffer_change = false;
-
-	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR &&
-			output->state->single_pixel_buffer_manager) {
-		uint8_t r8 = (output->config->color >> 24) & 0xFF;
-		uint8_t g8 = (output->config->color >> 16) & 0xFF;
-		uint8_t b8 = (output->config->color >> 8) & 0xFF;
-		uint8_t a8 = (output->config->color >> 0) & 0xFF;
-		uint32_t f = 0xFFFFFFFF / 0xFF; // division result is an integer
-		uint32_t r32 = r8 * f;
-		uint32_t g32 = g8 * f;
-		uint32_t b32 = b8 * f;
-		uint32_t a32 = a8 * f;
-		struct wl_buffer *buffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer(
-			output->state->single_pixel_buffer_manager, r32, g32, b32, a32);
-		render_buffer(output, buffer);
-		wl_buffer_destroy(buffer);
-		return;
-	}
-
+static void render_frame(struct wsbg_output *output,
+		struct wsbg_config *config) {
 	int32_t width, height;
 	// Rotate buffer to match output
 	if ((output->buffer_width < output->buffer_height) ==
@@ -173,34 +85,11 @@ static void render_frame(struct wsbg_output *output, cairo_surface_t *surface) {
 		height = output->buffer_width;
 	}
 
-	struct pool_buffer buffer;
-	if (!create_buffer(&buffer, output->state->shm,
-			width, height, WL_SHM_FORMAT_ARGB8888)) {
-		return;
-	}
+	struct wsbg_buffer *buffer =
+		get_wsbg_buffer(config, output->state, width, height);
 
-	cairo_t *cairo = buffer.cairo;
-	cairo_save(cairo);
-	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
-	cairo_paint(cairo);
-	cairo_restore(cairo);
-	if (output->config->mode == BACKGROUND_MODE_SOLID_COLOR) {
-		cairo_set_source_u32(cairo, output->config->color);
-		cairo_paint(cairo);
-	} else {
-		if (output->config->color) {
-			cairo_set_source_u32(cairo, output->config->color);
-			cairo_paint(cairo);
-		}
-
-		if (surface) {
-			render_background_image(cairo, surface,
-				output->config->mode, width, height);
-		}
-	}
-
-	render_buffer(output, buffer.buffer);
-	destroy_buffer(&buffer);
+	release_wsbg_buffer(config->buffer);
+	config->buffer = buffer;
 }
 
 static void destroy_wsbg_image(struct wsbg_image *image) {
@@ -224,6 +113,7 @@ static void destroy_wsbg_config(struct wsbg_config *config) {
 		return;
 	}
 	wl_list_remove(&config->link);
+	release_wsbg_buffer(config->buffer);
 	free(config);
 }
 
@@ -369,6 +259,8 @@ static void configure_output(struct wsbg_output *output) {
 		destroy_wsbg_config(config);
 	}
 
+	output->buffer_change = true;
+
 	struct wl_list configs;
 	wl_list_init(&configs);
 
@@ -377,6 +269,8 @@ static void configure_output(struct wsbg_output *output) {
 		wsbg_log_errno(LOG_ERROR, "Memory allocation failed");
 		return;
 	}
+	default_config->color = default_color;
+	default_config->mode = BACKGROUND_MODE_FILL;
 	wl_list_insert(&configs, &default_config->link);
 	output->config = default_config;
 
@@ -429,7 +323,7 @@ static void configure_output(struct wsbg_output *output) {
 						if (!(config = malloc(sizeof *config))) {
 							wsbg_log_errno(LOG_ERROR, "Memory allocation failed");
 						} else {
-							memcpy(config, default_config, sizeof *config);
+							*config = *default_config;
 							config->workspace = option->value.name;
 							if (workspace && strcmp(config->workspace, workspace) == 0) {
 								output->config = config;
@@ -642,14 +536,15 @@ static void parse_command_line(int argc, char **argv,
 			break;
 		}
 		switch (c) {
-		case 'c':  // color
-			if (!is_valid_color(optarg)) {
+		case 'c': { // color
+			struct wsbg_color color;
+			if (!parse_color(optarg, &color)) {
 				wsbg_log(LOG_ERROR, "Invalid color: %s", optarg);
 				continue;
 			}
-			wsbg_option_new(state, WSBG_COLOR)
-				->value.color = parse_color(optarg);
+			wsbg_option_new(state, WSBG_COLOR)->value.color = color;
 			break;
+		}
 		case 'i': { // image
 			struct wsbg_image *im, *image = NULL;
 			wl_list_for_each(im, &state->images, link) {
@@ -661,6 +556,7 @@ static void parse_command_line(int argc, char **argv,
 			if (!image) {
 				image = calloc(1, sizeof *image);
 				image->path = optarg;
+				wl_list_init(&image->buffers);
 				wl_list_insert(&state->images, &image->link);
 			}
 			wsbg_option_new(state, WSBG_IMAGE)->value.image = image;
@@ -743,10 +639,10 @@ struct wsbg_workspace *update_workspace(
 			struct wsbg_config *config;
 			wl_list_for_each(config, &output->configs, link) {
 				if (!config->workspace) {
-					output->buffer_change = output->buffer_change || (output->config != config);
+					output->config_change = output->config_change || (output->config != config);
 					output->config = config;
 				} else if (strcmp(config->workspace, workspace->name) == 0) {
-					output->buffer_change = true;
+					output->config_change = true;
 					output->config = config;
 					break;
 				}
@@ -880,6 +776,7 @@ int main(int argc, char **argv) {
 	wl_list_init(&state.outputs);
 	wl_list_init(&state.workspaces);
 	wl_list_init(&state.images);
+	wl_list_init(&state.colors);
 
 	parse_command_line(argc, argv, &state);
 
@@ -975,43 +872,27 @@ int main(int argc, char **argv) {
 			}
 		}
 
-		// Determine which images need to be loaded
 		struct wsbg_output *output;
 		wl_list_for_each(output, &state.outputs, link) {
-			if (output->configured && output->config->image && output->buffer_change) {
-				output->config->image->load_required = true;
-			}
-		}
-
-		// Load images, render associated frames, and unload
-		struct wsbg_image *image;
-		wl_list_for_each(image, &state.images, link) {
-			if (!image->load_required) {
+			if (!output->configured) {
 				continue;
 			}
-
-			cairo_surface_t *surface = load_background_image(image->path);
-			if (!surface) {
-				wsbg_log(LOG_ERROR, "Failed to load image: %s", image->path);
-				continue;
-			}
-
-			wl_list_for_each(output, &state.outputs, link) {
-				if (output->configured && output->buffer_change &&
-						output->config->image == image) {
-					render_frame(output, surface);
+			if (output->buffer_change) {
+				struct wsbg_config *config;
+				wl_list_for_each(config, &output->configs, link) {
+					render_frame(output, config);
 				}
 			}
-
-			image->load_required = false;
-			cairo_surface_destroy(surface);
+			if (output->buffer_change || output->config_change) {
+				render_buffer(output);
+				output->buffer_change = false;
+				output->config_change = false;
+			}
 		}
 
-		// Redraw outputs without associated image
-		wl_list_for_each(output, &state.outputs, link) {
-			if (output->configured && output->buffer_change) {
-				render_frame(output, NULL);
-			}
+		struct wsbg_image *image;
+		wl_list_for_each(image, &state.images, link) {
+			unload_image(image);
 		}
 	}
 

@@ -4,17 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-client.h>
+#include "state.h"
 
-struct pool_buffer {
-	struct wl_buffer *buffer;
-	cairo_surface_t *surface;
-	cairo_t *cairo;
-	void *data;
-	size_t size;
-};
-
-bool create_buffer(struct pool_buffer *buffer, struct wl_shm *shm,
-		int32_t width, int32_t height, uint32_t format);
-void destroy_buffer(struct pool_buffer *buffer);
+bool mmap_buffer(struct wsbg_buffer *buffer, struct wsbg_state *state,
+		int32_t width, int32_t height, cairo_surface_t **surface_ptr);
+bool mmap_color_buffer(struct wsbg_buffer *buffer, struct wsbg_state *state,
+		struct wsbg_color color);
+void munmap_buffer(struct wsbg_buffer *buffer);
 
 #endif
