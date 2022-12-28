@@ -94,7 +94,8 @@ void sway_ipc_open(struct sway_ipc_state *state) {
 		return;
 	}
 
-	if (fcntl(state->fd, F_SETFL, O_NONBLOCK) == -1) {
+	int flags = fcntl(state->fd, F_GETFL);
+	if (flags == -1 || fcntl(state->fd, F_SETFL, flags | O_NONBLOCK) == -1) {
 		wsbg_log_errno(LOG_ERROR, "Unable to set Sway socket to be non-blocking");
 		sway_ipc_close(state);
 	}
