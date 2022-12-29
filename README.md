@@ -3,7 +3,7 @@
 wsbg is a wallpaper utility for [Sway](https://swaywm.org/) which supports
 per-workspace configuration. It was forked from [swaybg](https://github.com/swaywm/swaybg).
 
-See the man page, `wsbg(1)`, for instructions on using wsbg.
+See the man page, [`wsbg(1)`](wsbg.1.scd), for instructions on using wsbg.
 
 ## Installation
 
