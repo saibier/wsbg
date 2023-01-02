@@ -104,12 +104,11 @@ if not gdk_pixbuf.found()
 endif
 
 sources = [
-	'background-image.c',
-	'cairo.c',
+	'buffer.c',
+	'image.c',
 	'json.c',
 	'log.c',
 	'main.c',
-	'pool-buffer.c',
 	'sway-ipc.c',
 ]
 

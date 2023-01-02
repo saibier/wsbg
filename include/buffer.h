@@ -1,11 +1,7 @@
-#ifndef _WSBG_BACKGROUND_IMAGE_H
-#define _WSBG_BACKGROUND_IMAGE_H
+#ifndef _WSBG_BUFFER_H
+#define _WSBG_BUFFER_H
 #include <stdint.h>
 #include "state.h"
-
-enum background_mode parse_background_mode(const char *mode);
-
-void unload_image(struct wsbg_image *image);
 
 struct wsbg_buffer *get_wsbg_buffer(
 		struct wsbg_config *config,

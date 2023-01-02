@@ -9,10 +9,10 @@
 #include <string.h>
 #include <strings.h>
 #include <wayland-client.h>
-#include "background-image.h"
+#include "buffer.h"
+#include "image.h"
 #include "json.h"
 #include "log.h"
-#include "pool-buffer.h"
 #include "state.h"
 #include "sway-ipc.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
