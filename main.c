@@ -10,7 +10,6 @@
 #include <strings.h>
 #include <wayland-client.h>
 #include "background-image.h"
-#include "cairo_util.h"
 #include "json.h"
 #include "log.h"
 #include "pool-buffer.h"

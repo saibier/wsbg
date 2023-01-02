@@ -1,6 +1,6 @@
 #ifndef _WSBG_STATE_H
 #define _WSBG_STATE_H
-#include <cairo.h>
+#include <pixman.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-client.h>
@@ -22,14 +22,6 @@ struct wsbg_state {
 	struct wl_list colors;      // struct wsbg_buffer::link
 };
 
-struct wsbg_image {
-	const char *path;
-	cairo_surface_t *surface;
-	int width, height;
-	struct wl_list buffers;  // struct wsbg_buffer::link
-	struct wl_list link;
-};
-
 struct wsbg_color {
 	uint8_t b, g, r, a;
 };
@@ -40,8 +32,23 @@ struct wsbg_color {
 		(x).r == (y).r && \
 		(x).a == (y).a)
 
-struct wsbg_image_dest {
-	int64_t x, y, width, height;
+struct wsbg_image_transform {
+	pixman_fixed_t x, y, scale_x, scale_y;
+};
+
+#define transform_eql(a, b) ( \
+		(a).x == (b).x && \
+		(a).y == (b).y && \
+		(a).scale_x == (b).scale_x && \
+		(a).scale_y == (b).scale_y)
+
+struct wsbg_image {
+	const char *path;
+	struct wsbg_color background;
+	pixman_image_t *surface;
+	int width, height;
+	struct wl_list buffers;  // struct wsbg_buffer::link
+	struct wl_list link;
 };
 
 struct wsbg_buffer {
@@ -50,8 +57,9 @@ struct wsbg_buffer {
 	size_t size;
 	size_t ref_count;
 	int32_t width, height;
-	struct wsbg_color color;
-	struct wsbg_image_dest dest_q16;
+	struct wsbg_image_transform transform;
+	struct wsbg_color background;
+	bool repeat;
 	struct wl_list link;
 };
 

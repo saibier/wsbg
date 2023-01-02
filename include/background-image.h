@@ -1,7 +1,6 @@
 #ifndef _WSBG_BACKGROUND_IMAGE_H
 #define _WSBG_BACKGROUND_IMAGE_H
 #include <stdint.h>
-#include "cairo_util.h"
 #include "state.h"
 
 enum background_mode parse_background_mode(const char *mode);

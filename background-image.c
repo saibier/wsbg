@@ -1,3 +1,8 @@
+#include <limits.h>
+#include <pixman.h>
+#if !HAVE_GDK_PIXBUF
+#include <png.h>
+#endif
 #include <stdint.h>
 #include <stdlib.h>
 #include <wayland-client.h>
@@ -27,56 +32,84 @@ enum background_mode parse_background_mode(const char *mode) {
 	return BACKGROUND_MODE_INVALID;
 }
 
-cairo_surface_t *load_background_image(const char *path) {
-	cairo_surface_t *image;
-#if HAVE_GDK_PIXBUF
-	GError *err = NULL;
-	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(path, &err);
-	if (!pixbuf) {
-		wsbg_log(LOG_ERROR, "Failed to load background image (%s).",
-				err->message);
-		return NULL;
-	}
-	image = gdk_cairo_image_surface_create_from_pixbuf(pixbuf);
-	g_object_unref(pixbuf);
-#else
-	image = cairo_image_surface_create_from_png(path);
-#endif // HAVE_GDK_PIXBUF
-	if (!image) {
-		wsbg_log(LOG_ERROR, "Failed to read background image.");
-		return NULL;
-	}
-	if (cairo_surface_status(image) != CAIRO_STATUS_SUCCESS) {
-		wsbg_log(LOG_ERROR, "Failed to read background image: %s."
 #if !HAVE_GDK_PIXBUF
-				"\nwsbg was compiled without gdk_pixbuf support, so only"
-				"\nPNG images can be loaded. This is the likely cause."
-#endif // !HAVE_GDK_PIXBUF
-				, cairo_status_to_string(cairo_surface_status(image)));
-		return NULL;
-	}
-	return image;
+static void free_image_data(pixman_image_t *image, void *data) {
+	free(data);
 }
 
-static bool load_image(struct wsbg_image *image) {
+static void load_png(struct wsbg_image *image) {
+	png_image reader = {};
+	reader.version = PNG_IMAGE_VERSION;
+
+	if (!png_image_begin_read_from_file(&reader, image->path)) {
+		wsbg_log(LOG_ERROR, "Failed to load %s: %s", image->path, reader.message);
+		return;
+	}
+
+	if (!(reader.format & PNG_FORMAT_FLAG_ALPHA)) {
+		image->background = (struct wsbg_color){};
+	}
+
+	image->width = reader.width;
+	image->height = reader.height;
+
+	int stride = PNG_IMAGE_ROW_STRIDE(reader);
+	void *buffer = malloc(PNG_IMAGE_BUFFER_SIZE(reader, stride));
+	if (!buffer) {
+		png_image_free(&reader);
+		return;
+	}
+
+	png_color background = {
+		.red   = image->background.r,
+		.green = image->background.g,
+		.blue  = image->background.b
+	};
+
+	reader.format = PNG_FORMAT_RGB;
+	if (!png_image_finish_read(&reader, &background, buffer, stride, NULL)) {
+		free(buffer);
+		return;
+	}
+
+	image->surface = pixman_image_create_bits_no_clear(
+			PIXMAN_b8g8r8, image->width, image->height, buffer, stride);
+	if (!image->surface) {
+		free(buffer);
+		return;
+	}
+
+	pixman_image_set_destroy_function(
+			image->surface, &free_image_data, buffer);
+}
+#endif
+
+static bool load_image(struct wsbg_image *image, struct wsbg_color background) {
 	if (image->surface) {
-		return true;
+		if (!image->background.a || color_eql(background, image->background)) {
+			return true;
+		}
+		unload_image(image);
 	} else if (image->width == -1) {
 		return false;
 	}
 
-	image->surface = load_background_image(image->path);
+	image->background = background;
+
+#if HAVE_GDK_PIXBUF
+	load_gdk_pixbuf(image);
+#else
+	load_png(image);
+#endif
+
 	if (!image->surface) {
 		image->width = -1;
 		return false;
 	}
 
-	image->width = cairo_image_surface_get_width(image->surface);
-	image->height = cairo_image_surface_get_height(image->surface);
-
 #if IMAGE_SIZE_MAX < INT_MAX
 	if (IMAGE_SIZE_MAX < image->width || IMAGE_SIZE_MAX < image->height) {
-		wsbg_log(LOG_ERROR, "Image too large: %s", image->path);
+		wsbg_log(LOG_ERROR, "Failed to load %s: Image too large", image->path);
 		unload_image(image);
 		image->width = -1;
 		return false;
@@ -88,7 +121,7 @@ static bool load_image(struct wsbg_image *image) {
 
 void unload_image(struct wsbg_image *image) {
 	if (image->surface) {
-		cairo_surface_destroy(image->surface);
+		pixman_image_unref(image->surface);
 		image->surface = NULL;
 	}
 }
@@ -103,34 +136,45 @@ void release_wsbg_buffer(struct wsbg_buffer *buffer) {
 	free(buffer);
 }
 
-static void get_wsbg_image_dest_q16(
+static void get_wsbg_image_transform(
 		struct wsbg_image *image,
 		enum background_mode mode,
 		int32_t width, int32_t height,
-		struct wsbg_image_dest *dest_q16) {
+		struct wsbg_image_transform *transform,
+		bool *covered) {
 	int64_t width_q16 = width * Q16;
 	int64_t height_q16 = height * Q16;
+
+	int64_t dest_width, dest_height;
 
 	switch (mode) {
 	case BACKGROUND_MODE_CENTER:
 	case BACKGROUND_MODE_TILE:
-		dest_q16->width = image->width * Q16;
-		dest_q16->height = image->height * Q16;
+		dest_width = image->width * Q16;
+		dest_height = image->height * Q16;
+		transform->scale_x = Q16;
+		transform->scale_y = Q16;
 		break;
 	case BACKGROUND_MODE_STRETCH:
-		dest_q16->width = width_q16;
-		dest_q16->height = height_q16;
+		dest_width = width_q16;
+		dest_height = height_q16;
+		transform->scale_x = image->width * Q16 / width;
+		transform->scale_y = image->height * Q16 / height;
 		break;
 	case BACKGROUND_MODE_FILL:
 	case BACKGROUND_MODE_FIT:
 	default:
-		dest_q16->width = image->width * height_q16 / image->height;
+		dest_width = image->width * height_q16 / image->height;
 		if (mode == BACKGROUND_MODE_FIT ?
-				width_q16 < dest_q16->width : dest_q16->width < width_q16) {
-			dest_q16->width = width_q16;
-			dest_q16->height = image->height * width_q16 / image->width;
+				width_q16 < dest_width : dest_width < width_q16) {
+			dest_width = width_q16;
+			dest_height = image->height * width_q16 / image->width;
+			transform->scale_x = transform->scale_y =
+				image->width * Q16 / width;
 		} else {
-			dest_q16->height = height_q16;
+			dest_height = height_q16;
+			transform->scale_x = transform->scale_y =
+				image->height * Q16 / height;
 		}
 	}
 
@@ -138,13 +182,26 @@ static void get_wsbg_image_dest_q16(
 	case BACKGROUND_MODE_FILL:
 	case BACKGROUND_MODE_FIT:
 	case BACKGROUND_MODE_CENTER:
-		dest_q16->x = (width_q16 - dest_q16->width) / 2;
-		dest_q16->y = (height_q16 - dest_q16->height) / 2;
+		transform->x = (dest_width - width_q16) / 2;
+		transform->y = (dest_height - height_q16) / 2;
+		// If scale is 1:1, align pixels for sharper look
+		if (transform->scale_x == Q16) {
+			transform->x &= ~(Q16 - 1);
+		}
+		if (transform->scale_y == Q16) {
+			transform->y &= ~(Q16 - 1);
+		}
 		break;
 	default:
-		dest_q16->x = 0;
-		dest_q16->y = 0;
+		transform->x = 0;
+		transform->y = 0;
 	}
+
+	*covered =
+		transform->x <= 0 &&
+		transform->y <= 0 &&
+		width_q16 <= transform->x + dest_width &&
+		height_q16 <= transform->y + dest_height;
 }
 
 static struct wsbg_buffer *get_wsbg_color_buffer(
@@ -152,7 +209,7 @@ static struct wsbg_buffer *get_wsbg_color_buffer(
 		struct wsbg_color color) {
 	struct wsbg_buffer *buffer;
 	wl_list_for_each(buffer, &state->colors, link) {
-		if (color_eql(buffer->color, color)) {
+		if (color_eql(buffer->background, color)) {
 			++buffer->ref_count;
 			return buffer;
 		}
@@ -166,7 +223,7 @@ static struct wsbg_buffer *get_wsbg_color_buffer(
 		return NULL;
 	}
 
-	buffer->color = color;
+	buffer->background = color;
 	buffer->ref_count = 1;
 	wl_list_insert(&state->colors, &buffer->link);
 	return buffer;
@@ -182,67 +239,75 @@ struct wsbg_buffer *get_wsbg_buffer(
 		return get_wsbg_color_buffer(state, config->color);
 	}
 
-	if (image->width <= 0 && !load_image(image)) {
+	if (image->width <= 0 && !load_image(image, config->color)) {
 		return NULL;
 	}
 
-	struct wsbg_image_dest dest_q16;
-	get_wsbg_image_dest_q16(image, config->mode, width, height, &dest_q16);
+	struct wsbg_image_transform transform;
+	bool covered;
+	get_wsbg_image_transform(
+			image, config->mode, width, height,
+			&transform, &covered);
+
+	struct wsbg_color background = (!covered || image->background.a) ?
+			config->color : (struct wsbg_color){};
+	bool repeat = (config->mode == BACKGROUND_MODE_TILE) && !covered;
 
 	struct wsbg_buffer *buffer;
 	wl_list_for_each(buffer, &image->buffers, link) {
-		if (color_eql(buffer->color, config->color) &&
-				buffer->dest_q16.x == dest_q16.x &&
-				buffer->dest_q16.y == dest_q16.y &&
-				buffer->dest_q16.width == dest_q16.width &&
-				buffer->dest_q16.height == dest_q16.height) {
+		if (transform_eql(buffer->transform, transform) &&
+				color_eql(buffer->background, background) &&
+				buffer->repeat == repeat) {
 			++buffer->ref_count;
 			return buffer;
 		}
 	}
 
-	if (!load_image(image)) {
+	if (!load_image(image, config->color)) {
 		return NULL;
 	} else if (!(buffer = calloc(1, sizeof *buffer))) {
 		wsbg_log_errno(LOG_ERROR, "Memory allocation failed");
 		return NULL;
 	}
 
-	cairo_surface_t *surface;
+	pixman_image_t *surface;
 	if (!mmap_buffer(buffer, state, width, height, &surface)) {
 		free(buffer);
 		return NULL;
 	}
 
-	buffer->color = config->color;
-	buffer->dest_q16 = dest_q16;
+	if (background.a) {
+		pixman_color_t fill = {
+			.red   = background.r * UINT16_C(0x0101),
+			.green = background.g * UINT16_C(0x0101),
+			.blue  = background.b * UINT16_C(0x0101),
+			.alpha = background.a * UINT16_C(0x0101)
+		};
 
-	cairo_t *cairo = cairo_create(surface);
-
-	cairo_set_source_rgb(cairo,
-		config->color.r / (double)0xFF,
-		config->color.g / (double)0xFF,
-		config->color.b / (double)0xFF);
-	cairo_paint(cairo);
-
-	cairo_translate(cairo,
-		(double)dest_q16.x / Q16,
-		(double)dest_q16.y / Q16);
-	cairo_scale(cairo,
-		(double)dest_q16.width / Q16 / image->width,
-		(double)dest_q16.height / Q16 / image->height);
-
-	cairo_pattern_t *pattern =
-		cairo_pattern_create_for_surface(image->surface);
-	if (config->mode == BACKGROUND_MODE_TILE) {
-		cairo_pattern_set_extend(pattern, CAIRO_EXTEND_REPEAT);
+		pixman_box32_t box = { .x2 = width, .y2 = height };
+		pixman_image_fill_boxes(PIXMAN_OP_SRC, surface, &fill, 1, &box);
 	}
-	cairo_set_source(cairo, pattern);
-	cairo_paint(cairo);
 
-	cairo_pattern_destroy(pattern);
-	cairo_destroy(cairo);
-	cairo_surface_destroy(surface);
+	pixman_transform_t matrix;
+	pixman_transform_init_translate(
+			&matrix, transform.x, transform.y);
+	pixman_transform_scale(
+			&matrix, NULL, transform.scale_x, transform.scale_y);
+
+	pixman_image_set_filter(image->surface, PIXMAN_FILTER_BEST, NULL, 0);
+	pixman_image_set_transform(image->surface, &matrix);
+	pixman_image_set_repeat(image->surface,
+			repeat ? PIXMAN_REPEAT_NORMAL : PIXMAN_REPEAT_NONE);
+
+	pixman_image_composite32(
+		PIXMAN_OP_OVER, image->surface, NULL, surface,
+		0, 0, 0, 0, 0, 0, width, height);
+
+	pixman_image_unref(surface);
+
+	buffer->background = background;
+	buffer->transform = transform;
+	buffer->repeat = repeat;
 
 	buffer->ref_count = 1;
 	wl_list_insert(&image->buffers, &buffer->link);

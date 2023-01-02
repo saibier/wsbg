@@ -1,24 +1,10 @@
 #ifndef _WSBG_CAIRO_UTIL_H
 #define _WSBG_CAIRO_UTIL_H
 
-#include <stdint.h>
-#include <cairo.h>
-#include <wayland-client.h>
+#include "state.h"
+
 #if HAVE_GDK_PIXBUF
-#include <gdk-pixbuf/gdk-pixbuf.h>
+void load_gdk_pixbuf(struct wsbg_image *image);
 #endif
-
-void cairo_set_source_u32(cairo_t *cairo, uint32_t color);
-cairo_subpixel_order_t to_cairo_subpixel_order(enum wl_output_subpixel subpixel);
-
-cairo_surface_t *cairo_image_surface_scale(cairo_surface_t *image,
-		int width, int height);
-
-#if HAVE_GDK_PIXBUF
-
-cairo_surface_t* gdk_cairo_image_surface_create_from_pixbuf(
-		const GdkPixbuf *gdkbuf);
-
-#endif // HAVE_GDK_PIXBUF
 
 #endif

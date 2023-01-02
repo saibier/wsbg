@@ -29,8 +29,9 @@ endif
 wayland_client = dependency('wayland-client')
 wayland_protos = dependency('wayland-protocols', version: '>=1.14')
 wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91', native: true)
-cairo = dependency('cairo')
+pixman = dependency('pixman-1')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
+png = dependency('libpng', required: not gdk_pixbuf.found())
 
 git = find_program('git', required: false, native: true)
 scdoc = find_program('scdoc', required: get_option('man-pages'), native: true)
@@ -92,11 +93,15 @@ client_protos = declare_dependency(
 )
 
 dependencies = [
-	cairo,
 	client_protos,
 	gdk_pixbuf,
+	pixman,
 	wayland_client,
 ]
+
+if not gdk_pixbuf.found()
+	dependencies += [png]
+endif
 
 sources = [
 	'background-image.c',

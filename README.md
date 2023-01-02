@@ -12,8 +12,9 @@ Install dependencies:
 * meson \*
 * wayland
 * wayland-protocols \*
-* cairo
+* pixman
 * gdk-pixbuf2 (optional: image formats other than PNG)
+* libpng (required if gdk-pixbuf2 is not available)
 * [scdoc](https://git.sr.ht/~sircmpwn/scdoc) (optional: man pages) \*
 * git (optional: version information) \*
 

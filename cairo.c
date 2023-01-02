@@ -1,126 +1,77 @@
+#if HAVE_GDK_PIXBUF
 #include <stdint.h>
-#include <cairo.h>
-#include "cairo_util.h"
-#if HAVE_GDK_PIXBUF
 #include <gdk-pixbuf/gdk-pixbuf.h>
-#endif
+#include "cairo_util.h"
+#include "log.h"
 
-void cairo_set_source_u32(cairo_t *cairo, uint32_t color) {
-	cairo_set_source_rgba(cairo,
-			(color >> (3*8) & 0xFF) / 255.0,
-			(color >> (2*8) & 0xFF) / 255.0,
-			(color >> (1*8) & 0xFF) / 255.0,
-			(color >> (0*8) & 0xFF) / 255.0);
+static void unref_image_pixbuf(pixman_image_t *image, void *pixbuf) {
+	g_object_unref(pixbuf);
 }
 
-cairo_subpixel_order_t to_cairo_subpixel_order(enum wl_output_subpixel subpixel) {
-	switch (subpixel) {
-	case WL_OUTPUT_SUBPIXEL_HORIZONTAL_RGB:
-		return CAIRO_SUBPIXEL_ORDER_RGB;
-	case WL_OUTPUT_SUBPIXEL_HORIZONTAL_BGR:
-		return CAIRO_SUBPIXEL_ORDER_BGR;
-	case WL_OUTPUT_SUBPIXEL_VERTICAL_RGB:
-		return CAIRO_SUBPIXEL_ORDER_VRGB;
-	case WL_OUTPUT_SUBPIXEL_VERTICAL_BGR:
-		return CAIRO_SUBPIXEL_ORDER_VBGR;
-	default:
-		return CAIRO_SUBPIXEL_ORDER_DEFAULT;
-	}
-	return CAIRO_SUBPIXEL_ORDER_DEFAULT;
-}
-
-#if HAVE_GDK_PIXBUF
-cairo_surface_t* gdk_cairo_image_surface_create_from_pixbuf(const GdkPixbuf *gdkbuf) {
-	int chan = gdk_pixbuf_get_n_channels(gdkbuf);
-	if (chan < 3) {
-		return NULL;
+void load_gdk_pixbuf(struct wsbg_image *image) {
+	GError *err = NULL;
+	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(image->path, &err);
+	if (!pixbuf) {
+		wsbg_log(LOG_ERROR, "Failed to load %s: %s", image->path, err->message);
+		return;
 	}
 
-	const guint8* gdkpix = gdk_pixbuf_read_pixels(gdkbuf);
-	if (!gdkpix) {
-		return NULL;
-	}
-	gint w = gdk_pixbuf_get_width(gdkbuf);
-	gint h = gdk_pixbuf_get_height(gdkbuf);
-	int stride = gdk_pixbuf_get_rowstride(gdkbuf);
-
-	cairo_format_t fmt = (chan == 3) ? CAIRO_FORMAT_RGB24 : CAIRO_FORMAT_ARGB32;
-	cairo_surface_t * cs = cairo_image_surface_create (fmt, w, h);
-	cairo_surface_flush (cs);
-	if ( !cs || cairo_surface_status(cs) != CAIRO_STATUS_SUCCESS) {
-		return NULL;
+	GdkPixbuf *rotated_pixbuf = gdk_pixbuf_apply_embedded_orientation(pixbuf);
+	if (rotated_pixbuf) {
+		g_object_unref(pixbuf);
+		pixbuf = rotated_pixbuf;
 	}
 
-	int cstride = cairo_image_surface_get_stride(cs);
-	unsigned char * cpix = cairo_image_surface_get_data(cs);
+	gint width = gdk_pixbuf_get_width(pixbuf);
+	gint height = gdk_pixbuf_get_height(pixbuf);
 
-	if (chan == 3) {
-		int i;
-		for (i = h; i; --i) {
-			const guint8 *gp = gdkpix;
-			unsigned char *cp = cpix;
-			const guint8* end = gp + 3*w;
-			while (gp < end) {
-#if G_BYTE_ORDER == G_LITTLE_ENDIAN
-				cp[0] = gp[2];
-				cp[1] = gp[1];
-				cp[2] = gp[0];
-#else
-				cp[1] = gp[0];
-				cp[2] = gp[1];
-				cp[3] = gp[2];
-#endif
-				gp += 3;
-				cp += 4;
-			}
-			gdkpix += stride;
-			cpix += cstride;
+	image->width = width;
+	image->height = height;
+
+	if (gdk_pixbuf_get_has_alpha(pixbuf)) {
+		guint32 background =
+			UINT32_C(0xFF000000) +
+			UINT32_C(0x00010000) * image->background.r +
+			UINT32_C(0x00000100) * image->background.g +
+			UINT32_C(0x00000001) * image->background.b;
+		GdkPixbuf *pixbuf_no_alpha = gdk_pixbuf_composite_color_simple(
+				pixbuf, width, height, GDK_INTERP_NEAREST,
+				0xFF, 8, background, background);
+		g_object_unref(pixbuf);
+		if (!pixbuf_no_alpha) {
+			return;
 		}
+		pixbuf = pixbuf_no_alpha;
 	} else {
-		/* premul-color = alpha/255 * color/255 * 255 = (alpha*color)/255
-		 * (z/255) = z/256 * 256/255     = z/256 (1 + 1/255)
-		 *         = z/256 + (z/256)/255 = (z + z/255)/256
-		 *         # recurse once
-		 *         = (z + (z + z/255)/256)/256
-		 *         = (z + z/256 + z/256/255) / 256
-		 *         # only use 16bit uint operations, loose some precision,
-		 *         # result is floored.
-		 *       ->  (z + z>>8)>>8
-		 *         # add 0x80/255 = 0.5 to convert floor to round
-		 *       =>  (z+0x80 + (z+0x80)>>8 ) >> 8
-		 * ------
-		 * tested as equal to lround(z/255.0) for uint z in [0..0xfe02]
-		 */
-#define PREMUL_ALPHA(x,a,b,z) \
-		G_STMT_START { z = a * b + 0x80; x = (z + (z >> 8)) >> 8; } \
-		G_STMT_END
-		int i;
-		for (i = h; i; --i) {
-			const guint8 *gp = gdkpix;
-			unsigned char *cp = cpix;
-			const guint8* end = gp + 4*w;
-			guint z1, z2, z3;
-			while (gp < end) {
-#if G_BYTE_ORDER == G_LITTLE_ENDIAN
-				PREMUL_ALPHA(cp[0], gp[2], gp[3], z1);
-				PREMUL_ALPHA(cp[1], gp[1], gp[3], z2);
-				PREMUL_ALPHA(cp[2], gp[0], gp[3], z3);
-				cp[3] = gp[3];
-#else
-				PREMUL_ALPHA(cp[1], gp[0], gp[3], z1);
-				PREMUL_ALPHA(cp[2], gp[1], gp[3], z2);
-				PREMUL_ALPHA(cp[3], gp[2], gp[3], z3);
-				cp[0] = gp[3];
-#endif
-				gp += 4;
-				cp += 4;
-			}
-			gdkpix += stride;
-			cpix += cstride;
-		}
-#undef PREMUL_ALPHA
+		image->background = (struct wsbg_color){};
 	}
-	cairo_surface_mark_dirty(cs);
-	return cs;
+
+	int n_channels = gdk_pixbuf_get_n_channels(pixbuf);
+	if (n_channels < 3 || 4 < n_channels) {
+		g_object_unref(pixbuf);
+		return;
+	}
+
+	void *pixels = (void *)gdk_pixbuf_read_pixels(pixbuf);
+	if (!pixels) {
+		g_object_unref(pixels);
+		return;
+	}
+	int stride = gdk_pixbuf_get_rowstride(pixbuf);
+	pixman_format_code_t format = n_channels == 3 ?
+#if G_BYTE_ORDER == G_LITTLE_ENDIAN
+		PIXMAN_b8g8r8 : PIXMAN_x8b8g8r8;
+#else
+		PIXMAN_b8g8r8 : PIXMAN_r8g8b8x8;
+#endif
+	image->surface = pixman_image_create_bits_no_clear(
+			format, width, height, pixels, stride);
+	if (!image->surface) {
+		g_object_unref(pixbuf);
+		return;
+	}
+
+	pixman_image_set_destroy_function(
+			image->surface, &unref_image_pixbuf, pixbuf);
 }
 #endif // HAVE_GDK_PIXBUF

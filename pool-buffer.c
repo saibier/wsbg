@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809
 #include <assert.h>
-#include <cairo.h>
 #include <fcntl.h>
+#include <pixman.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,7 +65,7 @@ cleanup_and_return:
 }
 
 bool mmap_buffer(struct wsbg_buffer *buffer, struct wsbg_state *state,
-		int32_t width, int32_t height, cairo_surface_t **surface_ptr) {
+		int32_t width, int32_t height, pixman_image_t **surface_ptr) {
 	uint32_t stride = width * 4;
 	size_t size = stride * height;
 
@@ -78,8 +78,17 @@ bool mmap_buffer(struct wsbg_buffer *buffer, struct wsbg_state *state,
 	wl_shm_pool_destroy(pool);
 
 	if (surface_ptr) {
-		*surface_ptr = cairo_image_surface_create_for_data(
-				buffer->data, CAIRO_FORMAT_RGB24, width, height, stride);
+		pixman_format_code_t format =
+			(*(char *)(int[]){1}) ? PIXMAN_x8r8g8b8 : PIXMAN_b8g8r8x8;
+
+		*surface_ptr = pixman_image_create_bits_no_clear(
+				format, width, height, buffer->data, stride);
+
+		if (!*surface_ptr) {
+			wsbg_log(LOG_ERROR, "Creation of pixman image failed");
+			munmap_buffer(buffer);
+			return false;
+		}
 	}
 	return true;
 }
