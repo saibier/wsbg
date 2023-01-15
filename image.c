@@ -6,30 +6,77 @@
 #include "image.h"
 #include "log.h"
 
-#define Q16 INT64_C(0x10000)
 #define IMAGE_SIZE_MAX (INT64_MAX / (INT32_MAX * Q16))
 
-enum background_mode parse_background_mode(const char *mode) {
-	if (strcmp(mode, "stretch") == 0) {
-		return BACKGROUND_MODE_STRETCH;
-	} else if (strcmp(mode, "fill") == 0) {
-		return BACKGROUND_MODE_FILL;
-	} else if (strcmp(mode, "fit") == 0) {
-		return BACKGROUND_MODE_FIT;
-	} else if (strcmp(mode, "center") == 0) {
-		return BACKGROUND_MODE_CENTER;
-	} else if (strcmp(mode, "tile") == 0) {
-		return BACKGROUND_MODE_TILE;
-	} else if (strcmp(mode, "solid_color") == 0) {
-		return BACKGROUND_MODE_SOLID_COLOR;
+bool parse_mode(
+		const char *str,
+		enum background_mode *mode,
+		struct wsbg_size *position) {
+	if (strcmp(str, "stretch") == 0) {
+		*mode = BACKGROUND_MODE_STRETCH;
+		*position = (struct wsbg_size){ .x = 0, .y = 0 };
+	} else if (strcmp(str, "fill") == 0) {
+		*mode = BACKGROUND_MODE_FILL;
+		*position = (struct wsbg_size){ .x = Q16 / 2, .y = Q16 / 2 };
+	} else if (strcmp(str, "fit") == 0) {
+		*mode = BACKGROUND_MODE_FIT;
+		*position = (struct wsbg_size){ .x = Q16 / 2, .y = Q16 / 2 };
+	} else if (strcmp(str, "center") == 0) {
+		*mode = BACKGROUND_MODE_CENTER;
+		*position = (struct wsbg_size){ .x = Q16 / 2, .y = Q16 / 2 };
+	} else if (strcmp(str, "tile") == 0) {
+		*mode = BACKGROUND_MODE_TILE;
+		*position = (struct wsbg_size){ .x = 0, .y = 0 };
+	} else if (strcmp(str, "solid_color") == 0) {
+		*mode = BACKGROUND_MODE_SOLID_COLOR;
+		*position = (struct wsbg_size){ .x = 0, .y = 0 };
+	} else {
+		return false;
 	}
-	wsbg_log(LOG_ERROR, "Unsupported background mode: %s", mode);
-	return BACKGROUND_MODE_INVALID;
+	return true;
+}
+
+bool parse_position(const char *str, struct wsbg_size *position) {
+	*position = (struct wsbg_size){ .x = Q16 / 2, .y = Q16 / 2 };
+	if (strcmp(str, "center") == 0) {
+		return true;
+	}
+	if (strncmp(str, "top", 3) == 0) {
+		position->y = 0;
+		str += 3;
+	} else if (strncmp(str, "bottom", 6) == 0) {
+		position->y = Q16;
+		str += 6;
+	} else {
+		goto left_right;
+	}
+	if (*str == '\0') {
+		return true;
+	} else if (*str != '/') {
+		return false;
+	}
+	++str;
+left_right:
+	if (strcmp(str, "left") == 0) {
+		position->x = 0;
+	} else if (strcmp(str, "right") == 0) {
+		position->x = Q16;
+	} else {
+		return false;
+	}
+	return true;
+}
+
+static int64_t rounded_div(int64_t dividend, int64_t divisor)
+{
+	int64_t x = (dividend * 2) / divisor;
+	return (x / 2) + (x & 1);
 }
 
 void get_wsbg_image_transform(
 		struct wsbg_image *image,
 		enum background_mode mode,
+		struct wsbg_size position,
 		int32_t width, int32_t height,
 		struct wsbg_image_transform *transform,
 		bool *covered) {
@@ -49,43 +96,36 @@ void get_wsbg_image_transform(
 	case BACKGROUND_MODE_STRETCH:
 		dest_width = width_q16;
 		dest_height = height_q16;
-		transform->scale_x = image->width * Q16 / width;
-		transform->scale_y = image->height * Q16 / height;
+		transform->scale_x = rounded_div(image->width * Q16, width);
+		transform->scale_y = rounded_div(image->height * Q16, height);
 		break;
 	case BACKGROUND_MODE_FILL:
 	case BACKGROUND_MODE_FIT:
 	default:
-		dest_width = image->width * height_q16 / image->height;
+		dest_width = rounded_div(image->width * height_q16, image->height);
 		if (mode == BACKGROUND_MODE_FIT ?
 				width_q16 < dest_width : dest_width < width_q16) {
 			dest_width = width_q16;
-			dest_height = image->height * width_q16 / image->width;
+			dest_height = rounded_div(image->height * width_q16, image->width);
 			transform->scale_x = transform->scale_y =
-				image->width * Q16 / width;
+				rounded_div(image->width * Q16, width);
 		} else {
 			dest_height = height_q16;
 			transform->scale_x = transform->scale_y =
-				image->height * Q16 / height;
+				rounded_div(image->height * Q16, height);
 		}
 	}
 
-	switch (mode) {
-	case BACKGROUND_MODE_FILL:
-	case BACKGROUND_MODE_FIT:
-	case BACKGROUND_MODE_CENTER:
-		transform->x = (dest_width - width_q16) / 2;
-		transform->y = (dest_height - height_q16) / 2;
-		// If scale is 1:1, align pixels for sharper look
-		if (transform->scale_x == Q16) {
-			transform->x &= ~(Q16 - 1);
-		}
-		if (transform->scale_y == Q16) {
-			transform->y &= ~(Q16 - 1);
-		}
-		break;
-	default:
-		transform->x = 0;
-		transform->y = 0;
+	transform->x = rounded_div((dest_width - width_q16) * position.x, Q16);
+	transform->y = rounded_div((dest_height - height_q16) * position.y, Q16);
+	// If scale is 1:1, align pixels for sharper look
+	if (transform->scale_x == Q16) {
+		transform->x += (Q16 / 2);
+		transform->x &= ~(Q16 - 1);
+	}
+	if (transform->scale_y == Q16) {
+		transform->y += (Q16 / 2);
+		transform->y &= ~(Q16 - 1);
 	}
 
 	*covered =

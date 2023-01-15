@@ -36,6 +36,10 @@ by passing _-o, --output_ and/or  _-w, --workspace_ followed by these options.
 	Consecutive _-o, --output_ flags are appended to the selected output(s)
 	rather than replacing them.
 
+*-p, --position* <position>
+	Position for images: _center_, _left_|_right_,
+	_top_|_bottom_[/<_left_|_right_>].
+
 *-v, --version*
 	Show the version number and quit.
 

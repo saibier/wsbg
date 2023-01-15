@@ -3,11 +3,17 @@
 #include <stdint.h>
 #include "state.h"
 
-enum background_mode parse_background_mode(const char *mode);
+bool parse_mode(
+		const char *str,
+		enum background_mode *mode,
+		struct wsbg_size *position);
+
+bool parse_position(const char *str, struct wsbg_size *position);
 
 void get_wsbg_image_transform(
 		struct wsbg_image *image,
 		enum background_mode mode,
+		struct wsbg_size position,
 		int32_t width, int32_t height,
 		struct wsbg_image_transform *transform,
 		bool *covered);

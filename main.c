@@ -263,13 +263,16 @@ static void configure_output(struct wsbg_output *output) {
 	struct wl_list configs;
 	wl_list_init(&configs);
 
-	struct wsbg_config *default_config;
-	if (!(default_config = calloc(1, sizeof *default_config))) {
+	struct wsbg_config *default_config = malloc(sizeof *default_config);
+	if (!default_config) {
 		wsbg_log_errno(LOG_ERROR, "Memory allocation failed");
 		return;
 	}
-	default_config->color = default_color;
-	default_config->mode = BACKGROUND_MODE_FILL;
+	*default_config = (struct wsbg_config){
+		.color = default_color,
+		.mode = BACKGROUND_MODE_FILL,
+		.position = { .x = Q16 / 2, .y = Q16 / 2 },
+	};
 	wl_list_insert(&configs, &default_config->link);
 	output->config = default_config;
 
@@ -347,6 +350,10 @@ static void configure_output(struct wsbg_output *output) {
 			} else if (option->type == WSBG_MODE) {
 				wl_list_for_each(config, &configs, link) {
 					config->mode = option->value.mode;
+				}
+			} else if (option->type == WSBG_POSITION) {
+				wl_list_for_each(config, &configs, link) {
+					config->position = option->value.size;
 				}
 			}
 		}
@@ -508,6 +515,7 @@ static void parse_command_line(int argc, char **argv,
 		{"image", required_argument, NULL, 'i'},
 		{"mode", required_argument, NULL, 'm'},
 		{"output", required_argument, NULL, 'o'},
+		{"position", required_argument, NULL, 'p'},
 		{"version", no_argument, NULL, 'v'},
 		{"workspace", required_argument, NULL, 'w'},
 		{0, 0, 0, 0}
@@ -521,16 +529,20 @@ static void parse_command_line(int argc, char **argv,
 		"  -i, --image            Set the image to display.\n"
 		"  -m, --mode             Set the mode to use for the image.\n"
 		"  -o, --output           Set the output to operate on or * for all.\n"
+		"  -p, --position         Set the position of the image."
 		"  -v, --version          Show the version number and quit.\n"
 		"  -w, --workspace        Set the workspace to operate on or * for all.\n"
 		"\n"
 		"Background Modes:\n"
-		"  stretch, fit, fill, center, tile, or solid_color\n";
+		"  stretch, fit, fill, center, tile, or solid_color\n"
+		"\n"
+		"Background Positions:\n"
+		"  center, left, right, top, bottom, or (top|bottom)/(left|right)\n";
 
 	int c;
 	while (1) {
 		int option_index = 0;
-		c = getopt_long(argc, argv, "c:hi:m:o:vw:", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:hi:m:o:p:vw:", long_options, &option_index);
 		if (c == -1) {
 			break;
 		}
@@ -561,16 +573,33 @@ static void parse_command_line(int argc, char **argv,
 			wsbg_option_new(state, WSBG_IMAGE)->value.image = image;
 			break;
 		}
-		case 'm': { // mode
-			enum background_mode mode = parse_background_mode(optarg);
-			if (mode == BACKGROUND_MODE_INVALID) {
-				wsbg_log(LOG_ERROR, "Invalid mode: %s", optarg);
+		case 'm':  // mode
+			{
+				enum background_mode mode;
+				struct wsbg_size position;
+				if (!parse_mode(optarg, &mode, &position)) {
+					wsbg_log(LOG_ERROR, "Invalid mode: %s", optarg);
+					break;
+				}
+				wsbg_option_new(state, WSBG_MODE)
+					->value.mode = mode;
+				wsbg_option_new(state, WSBG_POSITION)
+					->value.size = position;
 			}
-			wsbg_option_new(state, WSBG_MODE)->value.mode = mode;
 			break;
-		}
 		case 'o':  // output
 			wsbg_option_select(state, WSBG_OUTPUT, optarg);
+			break;
+		case 'p':  // position
+			{
+				struct wsbg_size position;
+				if (!parse_position(optarg, &position)) {
+					wsbg_log(LOG_ERROR, "Invalid position: %s", optarg);
+					break;
+				}
+				wsbg_option_new(state, WSBG_POSITION)
+					->value.size = position;
+			}
 			break;
 		case 'v':  // version
 			fprintf(stdout, "wsbg version " WSBG_VERSION "\n");

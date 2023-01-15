@@ -163,7 +163,7 @@ struct wsbg_buffer *get_wsbg_buffer(
 		int32_t width, int32_t height) {
 	struct wsbg_image *image = config->image;
 
-	if (!image) {
+	if (!image || config->mode == BACKGROUND_MODE_SOLID_COLOR) {
 		return get_wsbg_color_buffer(state, config->color);
 	}
 
@@ -174,7 +174,7 @@ struct wsbg_buffer *get_wsbg_buffer(
 	struct wsbg_image_transform transform;
 	bool covered;
 	get_wsbg_image_transform(
-			image, config->mode, width, height,
+			image, config->mode, config->position, width, height,
 			&transform, &covered);
 
 	struct wsbg_color background = (!covered || image->background.a) ?

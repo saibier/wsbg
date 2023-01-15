@@ -32,6 +32,12 @@ struct wsbg_color {
 		(x).r == (y).r && \
 		(x).a == (y).a)
 
+#define Q16 INT64_C(0x10000)
+
+struct wsbg_size {
+	pixman_fixed_t x, y;
+};
+
 struct wsbg_image_transform {
 	pixman_fixed_t x, y, scale_x, scale_y;
 };
@@ -68,7 +74,8 @@ enum wsbg_option_type {
 	WSBG_WORKSPACE,
 	WSBG_COLOR,
 	WSBG_IMAGE,
-	WSBG_MODE
+	WSBG_MODE,
+	WSBG_POSITION,
 };
 
 enum background_mode {
@@ -88,6 +95,7 @@ struct wsbg_option {
 		struct wsbg_color color;
 		struct wsbg_image *image;
 		enum background_mode mode;
+		struct wsbg_size size;
 	} value;
 	struct wl_list link;
 };
@@ -95,6 +103,7 @@ struct wsbg_option {
 struct wsbg_config {
 	const char *workspace;
 	enum background_mode mode;
+	struct wsbg_size position;
 	struct wsbg_color color;
 	struct wsbg_image *image;
 	struct wsbg_buffer *buffer;
