@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <wayland-client.h>
+#include "fractional-scale-v1-client-protocol.h"
 #include "single-pixel-buffer-v1-client-protocol.h"
 #include "viewporter-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
@@ -14,6 +15,7 @@ struct wsbg_state {
 	struct wl_shm *shm;
 	struct zwlr_layer_shell_v1 *layer_shell;
 	struct wp_viewporter *viewporter;
+	struct wp_fractional_scale_manager_v1 *fractional_scale_manager;
 	struct wp_single_pixel_buffer_manager_v1 *single_pixel_buffer_manager;
 	struct wl_list options;     // struct wsbg_option::link
 	struct wl_list outputs;     // struct wsbg_output::link
@@ -123,9 +125,11 @@ struct wsbg_output {
 
 	struct wl_surface *surface;
 	struct zwlr_layer_surface_v1 *layer_surface;
+	struct wp_fractional_scale_v1 *fractional_scale;
 
 	uint32_t width, height;
-	int32_t buffer_width, buffer_height;
+	uint32_t scale_120;
+	int32_t mode_width, mode_height;
 	bool configured, buffer_change, config_change;
 
 	struct wl_list link;

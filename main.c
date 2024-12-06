@@ -71,14 +71,19 @@ static void render_buffer(struct wsbg_output *output) {
 static void render_frame(struct wsbg_output *output,
 		struct wsbg_config *config) {
 	int32_t width, height;
-	// Rotate buffer to match output
-	if ((output->buffer_width < output->buffer_height) ==
-			(output->width < output->height)) {
-		width = output->buffer_width;
-		height = output->buffer_height;
+	if (output->fractional_scale) {
+		width = (output->width * output->scale_120 + 60) / 120;
+		height = (output->height * output->scale_120 + 60) / 120;
 	} else {
-		width = output->buffer_height;
-		height = output->buffer_width;
+		// Rotate buffer to match output
+		if ((output->mode_width < output->mode_height) ==
+				(output->width < output->height)) {
+			width = output->mode_width;
+			height = output->mode_height;
+		} else {
+			width = output->mode_height;
+			height = output->mode_width;
+		}
 	}
 
 	struct wsbg_buffer *buffer =
@@ -124,6 +129,9 @@ static void destroy_wsbg_output(struct wsbg_output *output) {
 	if (output->surface != NULL) {
 		wl_surface_destroy(output->surface);
 	}
+	if (output->fractional_scale != NULL) {
+		wp_fractional_scale_v1_destroy(output->fractional_scale);
+	}
 	wl_output_destroy(output->wl_output);
 	struct wsbg_config *config, *tmp_config;
 	wl_list_for_each_safe(config, tmp_config, &output->configs, link) {
@@ -149,9 +157,15 @@ static void layer_surface_configure(void *data,
 		uint32_t serial, uint32_t width, uint32_t height) {
 	struct wsbg_output *output = data;
 	if (output->width != width || output->height != height) {
-		// Detect when output rotation changes
-		if ((width < height) != (output->width < output->height)) {
-			output->buffer_change = true;
+		if (output->fractional_scale) {
+			if (output->width != width || output->height != height) {
+				output->buffer_change = true;
+			}
+		} else {
+			// Flag when output rotation changes
+			if ((width < height) != (output->width < output->height)) {
+				output->buffer_change = true;
+			}
 		}
 
 		output->width = width;
@@ -186,6 +200,21 @@ static const struct zwlr_layer_surface_v1_listener layer_surface_listener = {
 	.closed = layer_surface_closed,
 };
 
+static void output_preferred_scale(void *data,
+	struct wp_fractional_scale_v1 *fractional_scale, uint32_t scale_120)
+{
+	struct wsbg_output *output = data;
+	if (output->scale_120 != scale_120) {
+		output->scale_120 = scale_120;
+		output->buffer_change = true;
+	}
+}
+
+static const struct wp_fractional_scale_v1_listener
+	fractional_scale_listener = {
+	.preferred_scale = output_preferred_scale,
+};
+
 static void output_geometry(void *data, struct wl_output *output, int32_t x,
 		int32_t y, int32_t width_mm, int32_t height_mm, int32_t subpixel,
 		const char *make, const char *model, int32_t transform) {
@@ -195,9 +224,12 @@ static void output_geometry(void *data, struct wl_output *output, int32_t x,
 static void output_mode(void *data, struct wl_output *wl_output, uint32_t flags,
 		int32_t width, int32_t height, int32_t refresh) {
 	struct wsbg_output *output = data;
-	if (output->buffer_width != width || output->buffer_height != height) {
-		output->buffer_width = width;
-		output->buffer_height = height;
+	if (output->fractional_scale) {
+		return;
+	}
+	if (output->mode_width != width || output->mode_height != height) {
+		output->mode_width = width;
+		output->mode_height = height;
 		output->buffer_change = true;
 	}
 }
@@ -212,6 +244,16 @@ static void create_layer_surface(struct wsbg_output *output) {
 	assert(input_region);
 	wl_surface_set_input_region(output->surface, input_region);
 	wl_region_destroy(input_region);
+
+	if (output->state->fractional_scale_manager) {
+		output->scale_120 = 120;
+		output->fractional_scale =
+			wp_fractional_scale_manager_v1_get_fractional_scale(
+				output->state->fractional_scale_manager, output->surface);
+		assert(output->fractional_scale);
+		wp_fractional_scale_v1_add_listener(output->fractional_scale,
+			&fractional_scale_listener, output);
+	}
 
 	output->layer_surface = zwlr_layer_shell_v1_get_layer_surface(
 			output->state->layer_shell, output->surface, output->wl_output,
@@ -442,6 +484,10 @@ static void handle_global(void *data, struct wl_registry *registry,
 	} else if (strcmp(interface, wp_viewporter_interface.name) == 0) {
 		state->viewporter = wl_registry_bind(registry, name,
 			&wp_viewporter_interface, 1);
+	} else if (strcmp(interface,
+			wp_fractional_scale_manager_v1_interface.name) == 0) {
+		state->fractional_scale_manager = wl_registry_bind(registry, name,
+			&wp_fractional_scale_manager_v1_interface, 1);
 	} else if (strcmp(interface,
 			wp_single_pixel_buffer_manager_v1_interface.name) == 0) {
 		state->single_pixel_buffer_manager = wl_registry_bind(registry, name,

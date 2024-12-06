@@ -27,7 +27,7 @@ if is_freebsd
 endif
 
 wayland_client = dependency('wayland-client')
-wayland_protos = dependency('wayland-protocols', version: '>=1.14')
+wayland_protos = dependency('wayland-protocols', version: '>=1.31')
 wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91', native: true)
 pixman = dependency('pixman-1')
 gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
@@ -73,6 +73,7 @@ client_protocols = [
 	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
 	wl_protocol_dir / 'stable/viewporter/viewporter.xml',
 	wl_protocol_dir / 'staging/single-pixel-buffer/single-pixel-buffer-v1.xml',
+	wl_protocol_dir / 'staging/fractional-scale/fractional-scale-v1.xml',
 	'wlr-layer-shell-unstable-v1.xml',
 ]
 
