@@ -20,14 +20,15 @@
 #include "single-pixel-buffer-v1-client-protocol.h"
 
 const struct wsbg_color default_color = {
-	.r = 0x40, .b = 0x40, .g = 0x40, .a = 0xFF };
+	.r = 0x00, .b = 0x00, .g = 0x00, .a = 0xFF };
 
 static bool parse_color(const char *str, struct wsbg_color *color) {
 	int len = strlen(str);
-	if (len != 7 || str[0] != '#') {
-		goto err;
+	if (len == 7 && str[0] == '#') {
+		++str;
+	} else if (len != 6) {
+		return false;
 	}
-	++str;
 	uint8_t rgb[3] = {};
 	for (unsigned i = 0; i < 6; ++i) {
 		if ((i & 1)) {
@@ -40,7 +41,7 @@ static bool parse_color(const char *str, struct wsbg_color *color) {
 		} else if ('A' <= str[i] && str[i] <= 'F') {
 			rgb[i >> 1] += str[i] - 'A' + 0xA;
 		} else {
-			goto err;
+			return false;
 		}
 	}
 	color->r = rgb[0];
@@ -48,10 +49,6 @@ static bool parse_color(const char *str, struct wsbg_color *color) {
 	color->b = rgb[2];
 	color->a = 0xFF;
 	return true;
-err:
-	wsbg_log(LOG_ERROR, "%s is not a valid color for wsbg. "
-			"Color should be specified as #rrggbb (no alpha).", str);
-	return false;
 }
 
 static void render_buffer(struct wsbg_output *output) {
@@ -550,7 +547,8 @@ static void parse_command_line(int argc, char **argv,
 		case 'c': { // color
 			struct wsbg_color color;
 			if (!parse_color(optarg, &color)) {
-				wsbg_log(LOG_ERROR, "Invalid color: %s", optarg);
+				wsbg_log(LOG_ERROR, "Invalid color: %s "
+					"(color should be specified as rrggbb or #rrggbb)", optarg);
 				continue;
 			}
 			wsbg_option_new(state, WSBG_COLOR)->value.color = color;

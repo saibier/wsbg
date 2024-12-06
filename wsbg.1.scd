@@ -16,7 +16,7 @@ by passing _-o, --output_ and/or  _-w, --workspace_ followed by these options.
 
 # OPTIONS
 
-*-c, --color* <#rrggbb>
+*-c, --color* <[#]rrggbb>
 	Set the background color.
 
 *-h, --help*
