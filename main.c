@@ -559,6 +559,7 @@ static void parse_command_line(int argc, char **argv,
 		{"mode", required_argument, NULL, 'm'},
 		{"output", required_argument, NULL, 'o'},
 		{"position", required_argument, NULL, 'p'},
+		{"exit-on-reload", no_argument, NULL, 'r'},
 		{"version", no_argument, NULL, 'v'},
 		{"workspace", required_argument, NULL, 'w'},
 		{0, 0, 0, 0}
@@ -572,7 +573,8 @@ static void parse_command_line(int argc, char **argv,
 		"  -i, --image            Set the image to display.\n"
 		"  -m, --mode             Set the mode to use for the image.\n"
 		"  -o, --output           Set the output to operate on or * for all.\n"
-		"  -p, --position         Set the position of the image."
+		"  -p, --position         Set the position of the image.\n"
+		"  -r, --exit-on-reload   Exit when Sway config is reloaded.\n"
 		"  -v, --version          Show the version number and quit.\n"
 		"  -w, --workspace        Set the workspace to operate on or * for all.\n"
 		"\n"
@@ -585,7 +587,8 @@ static void parse_command_line(int argc, char **argv,
 	int c;
 	while (1) {
 		int option_index = 0;
-		c = getopt_long(argc, argv, "c:hi:m:o:p:vw:", long_options, &option_index);
+		c = getopt_long(argc, argv, "c:hi:m:o:p:rvw:",
+				long_options, &option_index);
 		if (c == -1) {
 			break;
 		}
@@ -644,6 +647,9 @@ static void parse_command_line(int argc, char **argv,
 				wsbg_option_new(state, WSBG_POSITION)
 					->value.size = position;
 			}
+			break;
+		case 'r':  // exit-on-reload
+			state->exit_on_reload = true;
 			break;
 		case 'v':  // version
 			fprintf(stdout, "wsbg version " WSBG_VERSION "\n");
@@ -806,6 +812,9 @@ const char *handle_sway_workspace_event(struct wsbg_state *state, char *buffer, 
 					json_string(&s, "focus") ||
 					json_string(&s, "move") ||
 					json_string(&s, "rename"))) {
+				if (state->exit_on_reload && json_string(&s, "reload")) {
+					state->exit = true;
+				}
 				return s.err;
 			}
 			update = true;
@@ -937,6 +946,11 @@ int main(int argc, char **argv) {
 				} else if (response.type == SWAY_IPC_EVENT_WORKSPACE) {
 					error = handle_sway_workspace_event(
 							&state, response.payload, response.size);
+
+					if (state.exit) {
+						wsbg_log(LOG_DEBUG, "Exiting due to Sway config reload");
+						goto exit;
+					}
 				}
 				if (error) {
 					wsbg_log(LOG_ERROR, "Sway IPC error: %s", error);

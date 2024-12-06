@@ -22,6 +22,8 @@ struct wsbg_state {
 	struct wl_list workspaces;  // struct wsbg_workspace::link
 	struct wl_list images;      // struct wsbg_image::link
 	struct wl_list colors;      // struct wsbg_buffer::link
+	bool exit_on_reload : 1;
+	bool exit : 1;
 };
 
 struct wsbg_color {

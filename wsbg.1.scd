@@ -40,6 +40,10 @@ by passing _-o, --output_ and/or  _-w, --workspace_ followed by these options.
 	Position for images: _center_, _left_|_right_,
 	_top_|_bottom_[/<_left_|_right_>].
 
+*-r, --exit-on-reload*
+	Exit when Sway config is reloaded. Can be used in conjunction with Sway's
+	_exec_always_ config command to restart when Sway's config is reloaded.
+
 *-v, --version*
 	Show the version number and quit.
 
