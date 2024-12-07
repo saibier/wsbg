@@ -67,7 +67,7 @@ left_right:
 	return true;
 }
 
-static int64_t rounded_div(int64_t dividend, int64_t divisor)
+int64_t rounded_div(int64_t dividend, int64_t divisor)
 {
 	int64_t x = (dividend * 2) / divisor;
 	return (x / 2) + (x & 1);
@@ -142,25 +142,49 @@ static void unref_image_pixbuf(pixman_image_t *image, void *pixbuf) {
 	g_object_unref(pixbuf);
 }
 
-static void load_gdk_pixbuf(struct wsbg_image *image) {
+static void load_gdk_pixbuf(struct wsbg_image *image,
+		int scaled_width, int scaled_height) {
+	gint width, height;
+	if (image->width <= 0) {
+		GdkPixbufFormat *format =
+				gdk_pixbuf_get_file_info(image->path, &width, &height);
+
+		if (format != NULL && gdk_pixbuf_format_is_scalable(format)) {
+			image->width = width;
+			image->height = height;
+			image->is_scalable = true;
+			if (scaled_width == 0) {
+				return;
+			}
+		}
+	}
+
 	GError *err = NULL;
-	GdkPixbuf *pixbuf = gdk_pixbuf_new_from_file(image->path, &err);
+	GdkPixbuf *pixbuf;
+	if (scaled_width == 0) {
+		pixbuf = gdk_pixbuf_new_from_file(image->path, &err);
+		if (pixbuf) {
+			GdkPixbuf *rotated_pixbuf =
+					gdk_pixbuf_apply_embedded_orientation(pixbuf);
+			if (rotated_pixbuf) {
+				g_object_unref(pixbuf);
+				pixbuf = rotated_pixbuf;
+			}
+
+			image->width = width = gdk_pixbuf_get_width(pixbuf);
+			image->height = height = gdk_pixbuf_get_height(pixbuf);
+		}
+	} else {
+		pixbuf = gdk_pixbuf_new_from_file_at_scale(
+				image->path, scaled_width, scaled_height, false, &err);
+		width = scaled_width;
+		height = scaled_height;
+	}
+
 	if (!pixbuf) {
 		wsbg_log(LOG_ERROR, "Failed to load %s: %s", image->path, err->message);
 		return;
 	}
-
-	GdkPixbuf *rotated_pixbuf = gdk_pixbuf_apply_embedded_orientation(pixbuf);
-	if (rotated_pixbuf) {
-		g_object_unref(pixbuf);
-		pixbuf = rotated_pixbuf;
-	}
-
-	gint width = gdk_pixbuf_get_width(pixbuf);
-	gint height = gdk_pixbuf_get_height(pixbuf);
-
-	image->width = width;
-	image->height = height;
 
 	if (gdk_pixbuf_get_has_alpha(pixbuf)) {
 		guint32 background =
@@ -188,7 +212,7 @@ static void load_gdk_pixbuf(struct wsbg_image *image) {
 
 	void *pixels = (void *)gdk_pixbuf_read_pixels(pixbuf);
 	if (!pixels) {
-		g_object_unref(pixels);
+		g_object_unref(pixbuf);
 		return;
 	}
 	int stride = gdk_pixbuf_get_rowstride(pixbuf);
@@ -263,9 +287,13 @@ static void load_png(struct wsbg_image *image) {
 }
 #endif // HAVE_GDK_PIXBUF
 
-bool load_image(struct wsbg_image *image, struct wsbg_color background) {
+bool load_image(struct wsbg_image *image,
+		struct wsbg_color background, int scaled_width, int scaled_height) {
 	if (image->surface) {
-		if (!image->background.a || color_eql(background, image->background)) {
+		if ((!image->background.a || color_eql(background, image->background))
+			&& (scaled_width == 0 || (
+					scaled_width == pixman_image_get_width(image->surface) &&
+					scaled_height == pixman_image_get_height(image->surface)))) {
 			return true;
 		}
 		unload_image(image);
@@ -276,12 +304,12 @@ bool load_image(struct wsbg_image *image, struct wsbg_color background) {
 	image->background = background;
 
 #if HAVE_GDK_PIXBUF
-	load_gdk_pixbuf(image);
+	load_gdk_pixbuf(image, scaled_width, scaled_height);
 #else
 	load_png(image);
 #endif
 
-	if (!image->surface) {
+	if (!image->surface && !(image->is_scalable && scaled_width == 0)) {
 		image->width = -1;
 		return false;
 	}

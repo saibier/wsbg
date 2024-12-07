@@ -57,6 +57,7 @@ struct wsbg_image {
 	struct wsbg_color background;
 	pixman_image_t *surface;
 	int width, height;
+	bool is_scalable;
 	struct wl_list buffers;  // struct wsbg_buffer::link
 	struct wl_list link;
 };

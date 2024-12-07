@@ -30,7 +30,7 @@ wayland_client = dependency('wayland-client')
 wayland_protos = dependency('wayland-protocols', version: '>=1.31')
 wayland_scanner = dependency('wayland-scanner', version: '>=1.14.91', native: true)
 pixman = dependency('pixman-1')
-gdk_pixbuf = dependency('gdk-pixbuf-2.0', required: get_option('gdk-pixbuf'))
+gdk_pixbuf = dependency('gdk-pixbuf-2.0', version: '>=2.32', required: get_option('gdk-pixbuf'))
 png = dependency('libpng', required: not gdk_pixbuf.found())
 
 git = find_program('git', required: false, native: true)

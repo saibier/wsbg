@@ -10,6 +10,8 @@ bool parse_mode(
 
 bool parse_position(const char *str, struct wsbg_size *position);
 
+int64_t rounded_div(int64_t dividend, int64_t divisor);
+
 void get_wsbg_image_transform(
 		struct wsbg_image *image,
 		enum background_mode mode,
@@ -18,7 +20,8 @@ void get_wsbg_image_transform(
 		struct wsbg_image_transform *transform,
 		bool *covered);
 
-bool load_image(struct wsbg_image *image, struct wsbg_color background);
+bool load_image(struct wsbg_image *image,
+		struct wsbg_color background, int scaled_width, int scaled_height);
 void unload_image(struct wsbg_image *image);
 
 #endif

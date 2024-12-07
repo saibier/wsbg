@@ -167,7 +167,7 @@ struct wsbg_buffer *get_wsbg_buffer(
 		return get_wsbg_color_buffer(state, config->color);
 	}
 
-	if (image->width <= 0 && !load_image(image, config->color)) {
+	if (image->width <= 0 && !load_image(image, config->color, 0, 0)) {
 		return NULL;
 	}
 
@@ -191,7 +191,13 @@ struct wsbg_buffer *get_wsbg_buffer(
 		}
 	}
 
-	if (!load_image(image, config->color)) {
+	int scaled_width = 0, scaled_height = 0;
+	if (image->is_scalable) {
+		scaled_width = rounded_div(image->width * Q16, transform.scale_x);
+		scaled_height = rounded_div(image->height * Q16, transform.scale_y);
+	}
+
+	if (!load_image(image, config->color, scaled_width, scaled_height)) {
 		return NULL;
 	} else if (!(buffer = calloc(1, sizeof *buffer))) {
 		wsbg_log_errno(LOG_ERROR, "Memory allocation failed");
@@ -219,8 +225,10 @@ struct wsbg_buffer *get_wsbg_buffer(
 	pixman_transform_t matrix;
 	pixman_transform_init_translate(
 			&matrix, transform.x, transform.y);
-	pixman_transform_scale(
-			&matrix, NULL, transform.scale_x, transform.scale_y);
+	if (!image->is_scalable) {
+		pixman_transform_scale(
+				&matrix, NULL, transform.scale_x, transform.scale_y);
+	}
 
 	pixman_image_set_filter(image->surface, PIXMAN_FILTER_BEST, NULL, 0);
 	pixman_image_set_transform(image->surface, &matrix);
