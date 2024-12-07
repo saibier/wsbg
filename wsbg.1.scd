@@ -2,7 +2,7 @@ wsbg(1)
 
 # NAME
 
-wsbg - Background for Sway workspaces
+wsbg - Background for *sway*(1) workspaces
 
 # SYNOPSIS
 
@@ -13,6 +13,19 @@ Displays a background image on all outputs of your Wayland session.
 Without an output or workspace specified, appearance options apply to all
 outputs and workspaces. Per-output and workspace appearance options can be set
 by passing _-o, --output_ and/or  _-w, --workspace_ followed by these options.
+
+# CONFIGURATION
+
+It is recommended to configure wsbg in your sway config file (see
+*sway*(5)). While wsbg can be used as a drop-in replacement for *swaybg*(1) by
+setting _swaybg_command wsbg_, this will not allow for per-workspace or other
+wsbg specific configuration. The recommended alternative is to start wsbg using
+_exec_always_ and pass _-r, --exit-on-reload_ like so:
+
+```
+swaybg_command - # Disable swaybg
+exec_always wsbg -r [options...]
+```
 
 # OPTIONS
 
@@ -41,8 +54,9 @@ by passing _-o, --output_ and/or  _-w, --workspace_ followed by these options.
 	_top_|_bottom_[/<_left_|_right_>].
 
 *-r, --exit-on-reload*
-	Exit when Sway config is reloaded. Can be used in conjunction with Sway's
-	_exec_always_ config command to restart when Sway's config is reloaded.
+	Exit when sway config is reloaded. Can be used in conjunction with sway's
+	_exec_always_ config command to exit and restart when sway's config is
+	reloaded.
 
 *-v, --version*
 	Show the version number and quit.
